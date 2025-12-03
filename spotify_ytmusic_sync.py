@@ -9,6 +9,9 @@ from dotenv import load_dotenv
 
 load_dotenv()  # carrega .env com SPOTIPY_*
 
+CSV_DIR = "csv"
+os.makedirs(CSV_DIR, exist_ok=True)
+
 
 # -------------------------------------------------------------------
 # Helpers básicos
@@ -28,11 +31,24 @@ def extract_playlist_id(playlist_id_or_url: str) -> str:
     return playlist_id_or_url.strip()
 
 
-# -------------------------------------------------------------------
-# Retorna a lista de 'músicas curtidas' (saved tracks) do usuário.
-# -------------------------------------------------------------------
+def get_spotify_client() -> Spotify:
+    """
+    Cria o cliente Spotify com os escopos necessários.
+    """
+    return Spotify(
+        auth_manager=SpotifyOAuth(
+            client_id=os.getenv("SPOTIPY_CLIENT_ID"),
+            client_secret=os.getenv("SPOTIPY_CLIENT_SECRET"),
+            redirect_uri=os.getenv("SPOTIPY_REDIRECT_URI"),
+            scope="playlist-read-private user-library-read",
+        )
+    )
+
 
 def get_liked_tracks(sp: Spotify):
+    """
+    Retorna a lista de 'músicas curtidas' (saved tracks) do usuário.
+    """
     results = sp.current_user_saved_tracks(limit=50)
     tracks = results["items"]
 
@@ -43,57 +59,27 @@ def get_liked_tracks(sp: Spotify):
     return tracks
 
 
-
 # -------------------------------------------------------------------
 # SPOTIFY → CSV
 # -------------------------------------------------------------------
 
 def export_spotify_playlist_to_csv(playlist_id_or_url: str, csv_path: str):
     """
-    Exporta playlist NORMAL ou as MÚSICAS CURTIDAS para CSV.
-
-    - Se o usuário passar URL/ID -> exporta a playlist
-    - Se o usuário digitar algo como 'curtidas', 'liked', etc -> exporta saved tracks
+    Exporta uma playlist NORMAL do Spotify para CSV (colunas: Artist, Track).
     """
-    sp = Spotify(
-        auth_manager=SpotifyOAuth(
-            client_id=os.getenv("SPOTIPY_CLIENT_ID"),
-            client_secret=os.getenv("SPOTIPY_CLIENT_SECRET"),
-            redirect_uri=os.getenv("SPOTIPY_REDIRECT_URI"),
-            scope="playlist-read-private user-library-read"
-        )
-    )
+    sp = get_spotify_client()
+    playlist_id = extract_playlist_id(playlist_id_or_url)
 
-    # Normaliza o input pra decidir o modo
-    key = playlist_id_or_url.strip().lower()
+    def get_playlist_tracks(pid):
+        results = sp.playlist_tracks(pid)
+        tracks_local = results["items"]
+        while results["next"]:
+            results = sp.next(results)
+            tracks_local.extend(results["items"])
+        return tracks_local
 
-    # Palavras que vamos tratar como "Minhas músicas curtidas"
-    liked_keywords = {
-        "curtidas",
-        "minhas curtidas",
-        "minhas músicas curtidas",
-        "liked",
-        "liked songs",
-        "salvas",
-    }
-
-    if key in liked_keywords:
-        print("\nLendo MINHAS MÚSICAS CURTIDAS do Spotify...")
-        tracks = get_liked_tracks(sp)
-    else:
-        playlist_id = extract_playlist_id(playlist_id_or_url)
-
-        def get_playlist_tracks(pid):
-            results = sp.playlist_tracks(pid)
-            tracks_local = results["items"]
-            while results["next"]:
-                results = sp.next(results)
-                tracks_local.extend(results["items"])
-            return tracks_local
-
-        print(f"\nLendo playlist do Spotify ({playlist_id})...")
-        tracks = get_playlist_tracks(playlist_id)
-
+    print(f"\nLendo playlist do Spotify ({playlist_id})...")
+    tracks = get_playlist_tracks(playlist_id)
     print(f"Encontradas {len(tracks)} faixas. Salvando em CSV...")
 
     with open(csv_path, mode="w", newline="", encoding="utf-8") as file:
@@ -109,6 +95,31 @@ def export_spotify_playlist_to_csv(playlist_id_or_url: str, csv_path: str):
             writer.writerow([artist_name, track_name])
 
     print(f"✅ Exportação concluída! {len(tracks)} músicas salvas em '{csv_path}'.")
+
+
+def export_liked_songs_to_csv(csv_path: str):
+    """
+    Exporta as MÚSICAS CURTIDAS do usuário para CSV.
+    """
+    sp = get_spotify_client()
+
+    print("\nLendo MINHAS MÚSICAS CURTIDAS do Spotify...")
+    tracks = get_liked_tracks(sp)
+    print(f"Encontradas {len(tracks)} faixas curtidas. Salvando em CSV...")
+
+    with open(csv_path, mode="w", newline="", encoding="utf-8") as file:
+        writer = csv.writer(file)
+        writer.writerow(["Artist", "Track"])  # cabeçalho
+
+        for item in tracks:
+            track = item.get("track")
+            if not track:
+                continue
+            artist_name = track["artists"][0]["name"]
+            track_name = track["name"]
+            writer.writerow([artist_name, track_name])
+
+    print(f"✅ Exportação concluída! {len(tracks)} músicas curtidas salvas em '{csv_path}'.")
 
 
 # -------------------------------------------------------------------
@@ -262,15 +273,13 @@ def fluxo_migrar_spotify_para_yt_base(headers_file: str = "browser.json"):
         print("Nenhuma playlist informada. Abortando.\n")
         return None, None, None
 
-    playlist_id = extract_playlist_id(playlist_input)
-
     base_name = input(
         "Nome base para o arquivo CSV e a playlist no YT Music (ex: minha_playlist): "
     ).strip()
     if not base_name:
-        base_name = playlist_id  # fallback pro ID
+        base_name = extract_playlist_id(playlist_input)
 
-    csv_path = f"{base_name}.csv"
+    csv_path = os.path.join(CSV_DIR, f"{base_name}.csv")
     yt_playlist_name = base_name  # usa o mesmo nome pro YT
 
     # 1) Exportar Spotify → CSV
@@ -316,7 +325,7 @@ def fluxo_migrar_spotify_para_yt_custom(headers_file: str = "browser.json"):
     if not yt_playlist_name:
         yt_playlist_name = csv_name
 
-    csv_path = f"{csv_name}.csv"
+    csv_path = os.path.join(CSV_DIR, f"{csv_name}.csv")
 
     # 1) Exportar Spotify → CSV
     export_spotify_playlist_to_csv(playlist_input, csv_path)
@@ -331,6 +340,42 @@ def fluxo_migrar_spotify_para_yt_custom(headers_file: str = "browser.json"):
 
     # 3) Salvar fallbacks (não encontradas) — usa nome do CSV como base
     fallback_file = salvar_fallback_not_found(not_found, csv_name)
+
+    return playlist_id_yt, yt_playlist_name, fallback_file
+
+
+# -------------------------------------------------------------------
+# Fluxo 3: MIGRAR MÚSICAS CURTIDAS
+# -------------------------------------------------------------------
+
+def fluxo_migrar_curtidas_para_yt(headers_file: str = "browser.json"):
+    """
+    Exporta MINHAS MÚSICAS CURTIDAS para CSV e cria uma playlist no YT Music.
+    """
+    print("\n=== MIGRAR MINHAS MÚSICAS CURTIDAS ===")
+
+    base_name = input(
+        "Nome base para o arquivo CSV e playlist no YT Music (ex: curtidas_spotify): "
+    ).strip()
+    if not base_name:
+        base_name = "liked_songs"
+
+    csv_path = os.path.join(CSV_DIR, f"{base_name}.csv")
+    yt_playlist_name = base_name
+
+    # 1) Exportar curtidas → CSV
+    export_liked_songs_to_csv(csv_path)
+
+    # 2) Importar CSV → YT Music
+    playlist_id_yt, not_found = import_csv_to_ytmusic(
+        csv_path=csv_path,
+        new_playlist_name=yt_playlist_name,
+        headers_file=headers_file,
+        sleep_seconds=0.6,
+    )
+
+    # 3) Salvar fallbacks (não encontradas)
+    fallback_file = salvar_fallback_not_found(not_found, base_name)
 
     return playlist_id_yt, yt_playlist_name, fallback_file
 
@@ -353,6 +398,7 @@ def main():
         print("1) Migrar playlist (nome base único: CSV = playlist YT)")
         print("2) Migrar playlist (nomes personalizados: CSV e YT separados)")
         print("3) Adicionar faixas manualmente na ÚLTIMA playlist criada")
+        print("4) Migrar MINHAS MÚSICAS CURTIDAS para o YouTube Music")
         print("0) Sair")
         choice = input("Escolha uma opção: ").strip()
 
@@ -364,13 +410,16 @@ def main():
 
         elif choice == "3":
             if not last_playlist_id:
-                print("Nenhuma playlist criada ainda nesta sessão. Use a opção 1 ou 2 primeiro.\n")
+                print("Nenhuma playlist criada ainda nesta sessão. Use a opção 1, 2 ou 4 primeiro.\n")
             else:
                 print(f"\nÚltima playlist criada: {last_playlist_name} (ID: {last_playlist_id})")
                 if last_fallback_file and os.path.exists(last_fallback_file):
                     print(f"Você também tem um arquivo de fallback: {last_fallback_file}")
                     print("Abra esse arquivo e copie/cole as buscas aqui, se quiser.\n")
                 interactive_add_tracks_to_playlist(last_playlist_id, last_playlist_name, headers_file)
+
+        elif choice == "4":
+            last_playlist_id, last_playlist_name, last_fallback_file = fluxo_migrar_curtidas_para_yt(headers_file)
 
         elif choice == "0":
             print("Saindo. Até a próxima! 👋")
