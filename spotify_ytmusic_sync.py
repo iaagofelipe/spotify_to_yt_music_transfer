@@ -133,6 +133,9 @@ def import_csv_to_ytmusic(
     headers_file: str,
     sleep_seconds: float,
     log,
+    dedup: bool = True,
+    on_progress_init=None,
+    on_progress_step=None,
 ):
     """
     Cria uma nova playlist no YouTube Music e importa as músicas do CSV.
@@ -159,27 +162,53 @@ def import_csv_to_ytmusic(
 
     with open(csv_path, mode="r", encoding="utf-8") as file:
         reader = csv.DictReader(file)
+        rows = list(reader)
 
-        for row in reader:
-            artist = row["Artist"]
-            track = row["Track"]
-            query = f"{artist} {track}"
+    total = len(rows)
+    if on_progress_init:
+        on_progress_init(total)
 
-            log(f"🔎 Buscando: {query}...")
-            try:
-                results = yt.search(query, filter="songs")
-                if results:
-                    video_id = results[0]["videoId"]
-                    yt.add_playlist_items(playlist_id, [video_id])
-                    added += 1
-                    log(f"  ✅ Adicionado: {track} - {artist}")
-                else:
-                    not_found.append(query)
-                    log(f"  ❌ Não encontrado: {query}")
+    seen_keys = set() if dedup else None
 
-                time.sleep(sleep_seconds)  # evita rate limit
-            except Exception as e:
-                log(f"  ⚠️ Erro ao adicionar '{query}': {e}")
+    for row in rows:
+        artist = row.get("Artist", "").strip()
+        track = row.get("Track", "").strip()
+
+        if not artist and not track:
+            if on_progress_step:
+                on_progress_step()
+            continue
+
+        key = (artist.lower(), track.lower())
+        if dedup and key in seen_keys:
+            log(f"  ↪️ Ignorando duplicata no CSV: {track} - {artist}")
+            if on_progress_step:
+                on_progress_step()
+            continue
+
+        if dedup:
+            seen_keys.add(key)
+
+        query = f"{artist} {track}"
+
+        log(f"🔎 Buscando: {query}...")
+        try:
+            results = yt.search(query, filter="songs")
+            if results:
+                video_id = results[0]["videoId"]
+                yt.add_playlist_items(playlist_id, [video_id])
+                added += 1
+                log(f"  ✅ Adicionado: {track} - {artist}")
+            else:
+                not_found.append(query)
+                log(f"  ❌ Não encontrado: {query}")
+
+            time.sleep(sleep_seconds)  # evita rate limit
+        except Exception as e:
+            log(f"  ⚠️ Erro ao adicionar '{query}': {e}")
+
+        if on_progress_step:
+            on_progress_step()
 
     log("\n🎉 Importação concluída!")
     log(f"Total adicionadas: {added}")
@@ -213,27 +242,97 @@ class SpotifyYtMusicApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Spotify → YouTube Music")
-        self.root.geometry("750x600")
+        self.root.geometry("850x650")
+
+        # Tema / estilo
+        self._setup_theme()
 
         # estado
         self.headers_file = tk.StringVar(value=HEADERS_FILE_DEFAULT)
         self.sleep_seconds = tk.DoubleVar(value=0.6)
+        self.dedup_var = tk.BooleanVar(value=True)
 
         self.last_playlist_id = None
         self.last_playlist_name = None
         self.last_fallback_file = None
 
-        # para garantir updates thread-safe no log
+        # log
         self.log_queue = []
+
+        # progresso
+        self.progress_var = tk.IntVar(value=0)
+        self.progress_max = tk.IntVar(value=1)
+        self.progress_label_text = tk.StringVar(value="Progresso: 0 / 0")
+
+        # animação
+        self.status_text = tk.StringVar(value="Pronto.")
+        self.animating = False
+        self.spinner_index = 0
+        self.spinner_chars = ["", "♪", "♫", "♬"]
 
         self._build_ui()
         self._schedule_log_update()
+
+    # ------------------- tema -------------------
+
+    def _setup_theme(self):
+        style = ttk.Style()
+        try:
+            style.theme_use("clam")
+        except tk.TclError:
+            pass
+
+        bg = "#020617"       # fundo geral
+        bg_frame = "#0f172a" # fundo de frames
+        fg = "#e5e7eb"       # texto
+        accent = "#22c55e"   # verde
+        accent2 = "#38bdf8"  # ciano
+
+        self.root.configure(bg=bg)
+
+        style.configure(".", background=bg_frame, foreground=fg, font=("Segoe UI", 10))
+        style.configure("TFrame", background=bg_frame)
+        style.configure("TLabelframe", background=bg_frame, foreground=fg)
+        style.configure("TLabel", background=bg_frame, foreground=fg)
+        style.configure("TNotebook", background=bg_frame)
+        style.configure("TNotebook.Tab", padding=(10, 5))
+        style.map("TNotebook.Tab", background=[("selected", bg)], foreground=[("selected", accent2)])
+
+        style.configure("TButton", padding=6)
+        style.configure("Accent.TButton", padding=8, font=("Segoe UI", 10, "bold"))
+        style.map("Accent.TButton",
+                  background=[("active", accent2)],
+                  foreground=[("active", "#0b1120")])
+
+        style.configure(
+            "Horizontal.TProgressbar",
+            troughcolor=bg,
+            background=accent,
+            bordercolor=bg,
+            lightcolor=accent,
+            darkcolor=accent,
+        )
 
     # ------------------- construção da UI -------------------
 
     def _build_ui(self):
         main_frame = ttk.Frame(self.root, padding=10)
         main_frame.pack(fill="both", expand=True)
+
+        # Topo: título
+        title_frame = ttk.Frame(main_frame)
+        title_frame.pack(fill="x", pady=(0, 10))
+        ttk.Label(
+            title_frame,
+            text="Spotify → YouTube Music",
+            font=("Segoe UI Semibold", 16),
+        ).pack(side="left")
+        ttk.Label(
+            title_frame,
+            text="  by Pedro 😎",
+            font=("Segoe UI", 9),
+            foreground="#64748b",
+        ).pack(side="left")
 
         # Topo: seleção do headers_file e sleep
         top_frame = ttk.Frame(main_frame)
@@ -249,6 +348,34 @@ class SpotifyYtMusicApp:
         ttk.Label(top_frame, text="Delay (s):").pack(side="left", padx=(20, 2))
         ttk.Entry(top_frame, textvariable=self.sleep_seconds, width=5).pack(side="left")
 
+        # Barra de progresso
+        progress_frame = ttk.Frame(main_frame)
+        progress_frame.pack(fill="x", pady=(0, 5))
+
+        self.progressbar = ttk.Progressbar(
+            progress_frame,
+            maximum=100,
+            variable=self.progress_var,
+            style="Horizontal.TProgressbar",
+        )
+        self.progressbar.pack(side="left", fill="x", expand=True)
+
+        self.progress_label = ttk.Label(
+            progress_frame,
+            textvariable=self.progress_label_text,
+        )
+        self.progress_label.pack(side="left", padx=8)
+
+        # Status + spinner
+        status_frame = ttk.Frame(main_frame)
+        status_frame.pack(fill="x", pady=(0, 5))
+
+        self.status_label = ttk.Label(status_frame, textvariable=self.status_text)
+        self.status_label.pack(side="left")
+
+        self.spinner_label = ttk.Label(status_frame, text="")
+        self.spinner_label.pack(side="right")
+
         # Notebook com abas
         notebook = ttk.Notebook(main_frame)
         notebook.pack(fill="both", expand=True)
@@ -256,13 +383,15 @@ class SpotifyYtMusicApp:
         self._build_tab_playlist(notebook)
         self._build_tab_liked(notebook)
         self._build_tab_manual(notebook)
+        self._build_tab_config(notebook)
 
         # Log
         log_frame = ttk.LabelFrame(main_frame, text="Log")
         log_frame.pack(fill="both", expand=True, pady=(10, 0))
 
-        self.log_text = tk.Text(log_frame, height=12, state="disabled", wrap="word")
+        self.log_text = tk.Text(log_frame, height=10, state="disabled", wrap="word")
         self.log_text.pack(fill="both", expand=True, side="left")
+        self.log_text.configure(bg="#020617", fg="#e5e7eb", insertbackground="#e5e7eb", relief="flat")
 
         scroll = ttk.Scrollbar(log_frame, command=self.log_text.yview)
         scroll.pack(side="right", fill="y")
@@ -307,7 +436,7 @@ class SpotifyYtMusicApp:
         self.entry_playlist_yt_name.grid(row=4, column=1, sticky="w", pady=(5, 0))
 
         # Botão
-        ttk.Button(frm, text="Migrar playlist", command=self.on_migrate_playlist).grid(
+        ttk.Button(frm, text="Migrar playlist", style="Accent.TButton", command=self.on_migrate_playlist).grid(
             row=5, column=0, columnspan=3, pady=15
         )
 
@@ -326,7 +455,7 @@ class SpotifyYtMusicApp:
         self.liked_base_name_var = tk.StringVar(value="liked_songs")
         ttk.Entry(frm, textvariable=self.liked_base_name_var, width=30).grid(row=0, column=1, sticky="w")
 
-        ttk.Button(frm, text="Migrar minhas músicas curtidas", command=self.on_migrate_liked).grid(
+        ttk.Button(frm, text="Migrar minhas músicas curtidas", style="Accent.TButton", command=self.on_migrate_liked).grid(
             row=1, column=0, columnspan=2, pady=15
         )
 
@@ -360,7 +489,7 @@ class SpotifyYtMusicApp:
         scroll.grid(row=3, column=3, sticky="ns")
         self.results_list.configure(yscrollcommand=scroll.set)
 
-        ttk.Button(frm, text="Adicionar faixa selecionada", command=self.on_manual_add_selected).grid(
+        ttk.Button(frm, text="Adicionar faixa selecionada", style="Accent.TButton", command=self.on_manual_add_selected).grid(
             row=4, column=0, columnspan=3, pady=(5, 0)
         )
 
@@ -373,6 +502,29 @@ class SpotifyYtMusicApp:
         frm.columnconfigure(2, weight=0)
         frm.columnconfigure(3, weight=0)
         frm.rowconfigure(3, weight=1)
+
+    def _build_tab_config(self, notebook):
+        tab = ttk.Frame(notebook)
+        notebook.add(tab, text="Config")
+
+        frm = ttk.Frame(tab, padding=10)
+        frm.pack(fill="both", expand=True)
+
+        ttk.Label(frm, text="Arquivo de headers (browser.json):").grid(row=0, column=0, sticky="w")
+        entry_headers = ttk.Entry(frm, textvariable=self.headers_file, width=40)
+        entry_headers.grid(row=0, column=1, sticky="w")
+        ttk.Button(frm, text="Procurar...", command=self._browse_headers_file).grid(row=0, column=2, padx=5)
+
+        ttk.Label(frm, text="Delay entre requisições (segundos):").grid(row=1, column=0, sticky="w", pady=(10, 0))
+        ttk.Entry(frm, textvariable=self.sleep_seconds, width=6).grid(row=1, column=1, sticky="w", pady=(10, 0))
+
+        ttk.Checkbutton(
+            frm,
+            text="Ativar deduplicação de faixas no import",
+            variable=self.dedup_var
+        ).grid(row=2, column=0, columnspan=3, sticky="w", pady=(10, 0))
+
+        frm.columnconfigure(1, weight=1)
 
     # ------------------- utilitários GUI -------------------
 
@@ -405,14 +557,12 @@ class SpotifyYtMusicApp:
                 # Windows
                 os.startfile(CSV_DIR)
             except Exception:
-                # Outras plataformas
                 messagebox.showinfo("Info", f"Pasta CSV: {os.path.abspath(CSV_DIR)}")
         else:
             messagebox.showerror("Erro", "Pasta csv não encontrada.")
 
     def _toggle_name_fields(self):
         if self.use_same_name_var.get():
-            # desabilita o campo de playlist YT
             self.entry_playlist_yt_name.configure(state="disabled")
         else:
             self.entry_playlist_yt_name.configure(state="normal")
@@ -423,9 +573,46 @@ class SpotifyYtMusicApp:
                 target(*args, **kwargs)
             except Exception as e:
                 self.append_log(f"\n❌ Erro: {e}")
+                self.root.after(0, lambda: self.stop_animation("Erro."))
                 self.root.after(0, lambda: messagebox.showerror("Erro", str(e)))
         t = threading.Thread(target=wrapper, daemon=True)
         t.start()
+
+    # progresso
+
+    def reset_progress(self, total: int):
+        if total <= 0:
+            total = 1
+        self.progress_max.set(total)
+        self.progressbar.configure(maximum=self.progress_max.get())
+        self.progress_var.set(0)
+        self.progress_label_text.set(f"Progresso: 0 / {self.progress_max.get()}")
+
+    def step_progress(self):
+        current = self.progress_var.get() + 1
+        if current > self.progress_max.get():
+            current = self.progress_max.get()
+        self.progress_var.set(current)
+        self.progress_label_text.set(f"Progresso: {current} / {self.progress_max.get()}")
+
+    # animação
+
+    def start_animation(self, text="Processando..."):
+        self.status_text.set(text)
+        self.animating = True
+        self._animate_spinner()
+
+    def stop_animation(self, text="Concluído."):
+        self.animating = False
+        self.status_text.set(text)
+        self.spinner_label.configure(text="")
+
+    def _animate_spinner(self):
+        if not self.animating:
+            return
+        self.spinner_index = (self.spinner_index + 1) % len(self.spinner_chars)
+        self.spinner_label.configure(text=self.spinner_chars[self.spinner_index])
+        self.root.after(200, self._animate_spinner)
 
     # ------------------- ações das abas -------------------
 
@@ -450,20 +637,28 @@ class SpotifyYtMusicApp:
         csv_path = os.path.join(CSV_DIR, f"{csv_name}.csv")
         headers = self.headers_file.get()
         sleep = float(self.sleep_seconds.get())
+        dedup = bool(self.dedup_var.get())
 
         def job():
+            self.root.after(0, lambda: self.start_animation("Migrando playlist..."))
+            self.root.after(0, lambda: self.reset_progress(1))
+
             self.append_log("\n=== MIGRAR PLAYLIST (GUI) ===")
             self.append_log(f"Playlist: {playlist_url}")
             self.append_log(f"CSV: {csv_path}")
             self.append_log(f"Playlist YT: {yt_name}")
 
             export_spotify_playlist_to_csv(playlist_url, csv_path, self.append_log)
+
             playlist_id_yt, not_found = import_csv_to_ytmusic(
                 csv_path=csv_path,
                 new_playlist_name=yt_name,
                 headers_file=headers,
                 sleep_seconds=sleep,
                 log=self.append_log,
+                dedup=dedup,
+                on_progress_init=lambda total: self.root.after(0, lambda: self.reset_progress(total)),
+                on_progress_step=lambda: self.root.after(0, self.step_progress),
             )
             fallback_file = salvar_fallback_not_found(not_found, csv_name, self.append_log)
 
@@ -471,8 +666,8 @@ class SpotifyYtMusicApp:
             self.last_playlist_id = playlist_id_yt
             self.last_playlist_name = yt_name
             self.last_fallback_file = fallback_file
-
-            self._update_last_playlist_label()
+            self.root.after(0, self._update_last_playlist_label)
+            self.root.after(0, lambda: self.stop_animation("Migração concluída."))
 
         self._run_in_thread(job)
 
@@ -485,28 +680,36 @@ class SpotifyYtMusicApp:
         yt_name = base_name
         headers = self.headers_file.get()
         sleep = float(self.sleep_seconds.get())
+        dedup = bool(self.dedup_var.get())
 
         def job():
+            self.root.after(0, lambda: self.start_animation("Migrando curtidas..."))
+            self.root.after(0, lambda: self.reset_progress(1))
+
             self.append_log("\n=== MIGRAR MÚSICAS CURTIDAS (GUI) ===")
             self.append_log(f"Base: {base_name}")
             self.append_log(f"CSV: {csv_path}")
             self.append_log(f"Playlist YT: {yt_name}")
 
             export_liked_songs_to_csv(csv_path, self.append_log)
+
             playlist_id_yt, not_found = import_csv_to_ytmusic(
                 csv_path=csv_path,
                 new_playlist_name=yt_name,
                 headers_file=headers,
                 sleep_seconds=sleep,
                 log=self.append_log,
+                dedup=dedup,
+                on_progress_init=lambda total: self.root.after(0, lambda: self.reset_progress(total)),
+                on_progress_step=lambda: self.root.after(0, self.step_progress),
             )
             fallback_file = salvar_fallback_not_found(not_found, base_name, self.append_log)
 
             self.last_playlist_id = playlist_id_yt
             self.last_playlist_name = yt_name
             self.last_fallback_file = fallback_file
-
-            self._update_last_playlist_label()
+            self.root.after(0, self._update_last_playlist_label)
+            self.root.after(0, lambda: self.stop_animation("Migração concluída."))
 
         self._run_in_thread(job)
 
