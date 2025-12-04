@@ -282,35 +282,70 @@ class SpotifyYtMusicApp:
         except tk.TclError:
             pass
 
-        bg = "#020617"       # fundo geral
-        bg_frame = "#0f172a" # fundo de frames
-        fg = "#e5e7eb"       # texto
-        accent = "#22c55e"   # verde
-        accent2 = "#38bdf8"  # ciano
+        # Cores principais do tema dark
+        bg_main = "#020617"        # fundo da janela raiz
+        bg_frame = "#0f172a"       # fundo de frames
+        fg_text = "#e5e7eb"        # texto claro
+        accent = "#22c55e"         # verde
+        accent2 = "#38bdf8"        # ciano
 
-        self.root.configure(bg=bg)
+        self.root.configure(bg=bg_main)
 
-        style.configure(".", background=bg_frame, foreground=fg, font=("Segoe UI", 10))
+        # Estilo geral para widgets ttk
+        style.configure(
+            ".",
+            background=bg_frame,
+            foreground=fg_text,
+            font=("Segoe UI", 10)
+        )
         style.configure("TFrame", background=bg_frame)
-        style.configure("TLabelframe", background=bg_frame, foreground=fg)
-        style.configure("TLabel", background=bg_frame, foreground=fg)
+        style.configure("TLabelframe", background=bg_frame, foreground=fg_text)
+        style.configure("TLabel", background=bg_frame, foreground=fg_text)
+
+        # Notebook e abas
         style.configure("TNotebook", background=bg_frame)
-        style.configure("TNotebook.Tab", padding=(10, 5))
-        style.map("TNotebook.Tab", background=[("selected", bg)], foreground=[("selected", accent2)])
+        style.configure("TNotebook.Tab", padding=(10, 5), background=bg_frame, foreground=fg_text)
+        style.map(
+            "TNotebook.Tab",
+            background=[("selected", bg_main)],
+            foreground=[("selected", accent2)]
+        )
 
-        style.configure("TButton", padding=6)
-        style.configure("Accent.TButton", padding=8, font=("Segoe UI", 10, "bold"))
-        style.map("Accent.TButton",
-                  background=[("active", accent2)],
-                  foreground=[("active", "#0b1120")])
+        # Botões
+        style.configure("TButton", padding=6, background=bg_frame, foreground=fg_text)
+        style.map("TButton", background=[("active", "#1e293b")])
+        style.configure(
+            "Accent.TButton",
+            padding=8,
+            font=("Segoe UI", 10, "bold"),
+            background=accent,
+            foreground="#0b1120",
+        )
+        style.map("Accent.TButton", background=[("active", accent2)])
 
+        # Barra de progresso
         style.configure(
             "Horizontal.TProgressbar",
-            troughcolor=bg,
+            troughcolor=bg_main,
             background=accent,
-            bordercolor=bg,
             lightcolor=accent,
             darkcolor=accent,
+            bordercolor=bg_main,
+        )
+
+        # Entry (campo de texto)
+        style.configure(
+            "TEntry",
+            fieldbackground="#1e293b",
+            foreground=fg_text,
+            background="#1e293b",
+        )
+
+        # Checkbutton
+        style.configure(
+            "TCheckbutton",
+            background=bg_frame,
+            foreground=fg_text,
         )
 
     # ------------------- construção da UI -------------------
@@ -329,7 +364,7 @@ class SpotifyYtMusicApp:
         ).pack(side="left")
         ttk.Label(
             title_frame,
-            text="  by Pedro 😎",
+            text="  by Iago 😎",
             font=("Segoe UI", 9),
             foreground="#64748b",
         ).pack(side="left")
@@ -391,7 +426,13 @@ class SpotifyYtMusicApp:
 
         self.log_text = tk.Text(log_frame, height=10, state="disabled", wrap="word")
         self.log_text.pack(fill="both", expand=True, side="left")
-        self.log_text.configure(bg="#020617", fg="#e5e7eb", insertbackground="#e5e7eb", relief="flat")
+        self.log_text.configure(
+            bg="#020617",
+            fg="#e5e7eb",
+            insertbackground="#e5e7eb",
+            relief="flat",
+            highlightthickness=0,
+        )
 
         scroll = ttk.Scrollbar(log_frame, command=self.log_text.yview)
         scroll.pack(side="right", fill="y")
@@ -414,7 +455,9 @@ class SpotifyYtMusicApp:
         # URL / ID
         ttk.Label(frm, text="URL ou ID da playlist no Spotify:").grid(row=0, column=0, sticky="w")
         self.playlist_url_var = tk.StringVar()
-        ttk.Entry(frm, textvariable=self.playlist_url_var, width=60).grid(row=1, column=0, columnspan=3, sticky="we", pady=2)
+        ttk.Entry(frm, textvariable=self.playlist_url_var, width=60).grid(
+            row=1, column=0, columnspan=3, sticky="we", pady=2
+        )
 
         # Nome base / CSV / playlist YT
         self.use_same_name_var = tk.BooleanVar(value=True)
@@ -432,13 +475,21 @@ class SpotifyYtMusicApp:
 
         ttk.Label(frm, text="Nome playlist YT:").grid(row=4, column=0, sticky="w", pady=(5, 0))
         self.playlist_yt_name_var = tk.StringVar()
-        self.entry_playlist_yt_name = ttk.Entry(frm, textvariable=self.playlist_yt_name_var, width=30, state="disabled")
+        self.entry_playlist_yt_name = ttk.Entry(
+            frm,
+            textvariable=self.playlist_yt_name_var,
+            width=30,
+            state="disabled",
+        )
         self.entry_playlist_yt_name.grid(row=4, column=1, sticky="w", pady=(5, 0))
 
         # Botão
-        ttk.Button(frm, text="Migrar playlist", style="Accent.TButton", command=self.on_migrate_playlist).grid(
-            row=5, column=0, columnspan=3, pady=15
-        )
+        ttk.Button(
+            frm,
+            text="Migrar playlist",
+            style="Accent.TButton",
+            command=self.on_migrate_playlist,
+        ).grid(row=5, column=0, columnspan=3, pady=15)
 
         frm.columnconfigure(0, weight=0)
         frm.columnconfigure(1, weight=1)
@@ -455,9 +506,12 @@ class SpotifyYtMusicApp:
         self.liked_base_name_var = tk.StringVar(value="liked_songs")
         ttk.Entry(frm, textvariable=self.liked_base_name_var, width=30).grid(row=0, column=1, sticky="w")
 
-        ttk.Button(frm, text="Migrar minhas músicas curtidas", style="Accent.TButton", command=self.on_migrate_liked).grid(
-            row=1, column=0, columnspan=2, pady=15
-        )
+        ttk.Button(
+            frm,
+            text="Migrar minhas músicas curtidas",
+            style="Accent.TButton",
+            command=self.on_migrate_liked,
+        ).grid(row=1, column=0, columnspan=2, pady=15)
 
         frm.columnconfigure(0, weight=0)
         frm.columnconfigure(1, weight=1)
@@ -482,20 +536,34 @@ class SpotifyYtMusicApp:
         ttk.Button(frm, text="Buscar", command=self.on_manual_search).grid(row=2, column=2, padx=5)
 
         # Lista de resultados
-        self.results_list = tk.Listbox(frm, height=8)
+        self.results_list = tk.Listbox(
+            frm,
+            height=8,
+            bg="#020617",
+            fg="#e5e7eb",
+            highlightthickness=0,
+            selectbackground="#1e293b",
+            selectforeground="#e5e7eb",
+            relief="flat",
+        )
         self.results_list.grid(row=3, column=0, columnspan=3, sticky="nsew", pady=(5, 5))
 
         scroll = ttk.Scrollbar(frm, orient="vertical", command=self.results_list.yview)
         scroll.grid(row=3, column=3, sticky="ns")
         self.results_list.configure(yscrollcommand=scroll.set)
 
-        ttk.Button(frm, text="Adicionar faixa selecionada", style="Accent.TButton", command=self.on_manual_add_selected).grid(
-            row=4, column=0, columnspan=3, pady=(5, 0)
-        )
+        ttk.Button(
+            frm,
+            text="Adicionar faixa selecionada",
+            style="Accent.TButton",
+            command=self.on_manual_add_selected,
+        ).grid(row=4, column=0, columnspan=3, pady=(5, 0))
 
-        ttk.Button(frm, text="Abrir último arquivo _not_found (se existir)", command=self.on_open_last_fallback).grid(
-            row=5, column=0, columnspan=3, pady=(10, 0)
-        )
+        ttk.Button(
+            frm,
+            text="Abrir último arquivo _not_found (se existir)",
+            command=self.on_open_last_fallback,
+        ).grid(row=5, column=0, columnspan=3, pady=(10, 0))
 
         frm.columnconfigure(0, weight=0)
         frm.columnconfigure(1, weight=1)
@@ -515,13 +583,17 @@ class SpotifyYtMusicApp:
         entry_headers.grid(row=0, column=1, sticky="w")
         ttk.Button(frm, text="Procurar...", command=self._browse_headers_file).grid(row=0, column=2, padx=5)
 
-        ttk.Label(frm, text="Delay entre requisições (segundos):").grid(row=1, column=0, sticky="w", pady=(10, 0))
-        ttk.Entry(frm, textvariable=self.sleep_seconds, width=6).grid(row=1, column=1, sticky="w", pady=(10, 0))
+        ttk.Label(frm, text="Delay entre requisições (segundos):").grid(
+            row=1, column=0, sticky="w", pady=(10, 0)
+        )
+        ttk.Entry(frm, textvariable=self.sleep_seconds, width=6).grid(
+            row=1, column=1, sticky="w", pady=(10, 0)
+        )
 
         ttk.Checkbutton(
             frm,
             text="Ativar deduplicação de faixas no import",
-            variable=self.dedup_var
+            variable=self.dedup_var,
         ).grid(row=2, column=0, columnspan=3, sticky="w", pady=(10, 0))
 
         frm.columnconfigure(1, weight=1)
